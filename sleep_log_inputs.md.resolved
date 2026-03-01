@@ -1,0 +1,52 @@
+# Specifiche Input: Inserimento Ore di Sonno
+
+Quando un utente inserisce i dati relativi alle ore di sonno tramite il componente `SleepLogForm`, il programma si aspetta i seguenti campi e formati.
+
+## Struttura Dati Attesa (JSON Payload / Emit State)
+
+```json
+{
+  "date": "YYYY-MM-DD",
+  "intervals": [
+    {
+      "start": "HH:MM",
+      "end": "HH:MM",
+      "quality": 8
+    }
+  ],
+  "notes": "Testo opzionale"
+}
+```
+
+## Dettaglio dei Campi
+
+### 1. `date` (Data)
+- **Tipo:** Stringa (formato ISO-8601: `YYYY-MM-DD`, es. `2025-01-15`)
+- **Obbligatorio:** Sì
+- **Logica di Business (Il "Giorno di Sonno"):** La data selezionata rappresenta un ciclo di sonno che inizia alle **20:00 del giorno precedente** e termina alle **19:59 del giorno indicato**. Ad esempio, se la data è 15 Gennaio, l'intervallo valido va dalle 20:00 del 14 Gennaio alle 19:59 del 15 Gennaio.
+
+### 2. `intervals` (Intervalli di Sonno)
+Puoi inserire uno o più blocchi di sonno per la singola notte/giornata. L'array non può essere vuoto e ogni intervallo deve obbligatoriamente contenere:
+
+- **`start` (Ora Inizio):**
+  - **Tipo:** Stringa (formato 24h: `HH:MM`, es. `23:30`)
+  - **Obbligatorio:** Sì
+
+- **[end](file:///c:/projects/insmoniawebfe/pages/index.vue#503-527) (Ora Fine):**
+  - **Tipo:** Stringa (formato 24h: `HH:MM`, es. `07:15`)
+  - **Obbligatorio:** Sì
+  - **Validazione:** L'orario di fine **deve essere logicamente successivo** all'orario di inizio (calcolato basandosi sul punto di origine delle 20:00 descritto sopra).
+
+- **`quality` / `intensity` (Qualità del Sonno):**
+  - **Tipo:** Numero Intero (`Number`)
+  - **Obbligatorio:** Sì
+  - **Validazione:** Deve essere un valore compreso tra **0 e 10**.
+  - **Nota backend:** Il frontend usa la chiave `quality` internamente, ma in fase di mapping dal server l'API chiama questo campo `intensity`.
+
+**Check globale degli intervalli:** 
+Il sistema esegue una validazione (checkOverlap) garantendo che **nessun intervallo si accavalli** con un altro nella stessa sessione di `date`.
+
+### 3. `notes` (Note Aggiuntive)
+- **Tipo:** Stringa
+- **Obbligatorio:** No (Opzionale)
+- **Descrizione:** Un campo testuale libero in cui l'utente può inserire annotazioni relative alla sua nottata (es. "Svegliato 3 volte", "Preso tisana rilassante", ecc.).

@@ -1,0 +1,92 @@
+# Stili del Progetto: Insomnia Web Frontend (Nuxt.js + Tailwind CSS)
+
+Questo documento riassume le linee guida di stile, la palette colori, la tipografia e i pattern architetturali CSS estratti dal progetto originale. Può essere utilizzato come riferimento (o "design system" informale) per riapplicare fedelmente la stessa User eXperience/User Interface ad altri progetti.
+
+## 1. Architettura CSS e Framework
+
+Il progetto è basato su **Vue 3 / Nuxt 3** e utilizza in modo intensivo **Tailwind CSS**.
+- **Global CSS File:** [assets/css/app.css](file:///c:/projects/insmoniawebfe/assets/css/app.css) (contiene solamente la direttiva `@import "tailwindcss";`, indicando che non viene usato CSS custom sostanziale ma quasi interamente classi di utilità Tailwind).
+- **Dark Mode:** Interamente supportata tramite la variante `dark:` di Tailwind (es. `bg-white dark:bg-gray-800`).
+
+## 2. Palette Colori e Tema
+
+L'applicazione fa uso dei colori standard di Tailwind, strutturati per fornire un contrasto netto tra Light Mode e Dark Mode.
+
+### Sfondi (Backgrounds)
+- **App/Body / Container primari:** `bg-white` (Light) e `bg-gray-800` (Dark)
+- **Container secondari/cards/aree di form:** `bg-gray-50` (Light) e `bg-gray-700` (Dark)
+- **Call-to-Action primari (Gradients):** `bg-gradient-to-r from-indigo-600 to-purple-600`
+- **Call-to-Action secondari/Hover:** `hover:bg-indigo-700`, `hover:from-indigo-700 hover:to-purple-700`
+- **Tasti di allerta o log-out:** `bg-red-600 hover:bg-red-700`
+
+### Testi (Typography Colors)
+- **Intestazioni (Headings):** `text-gray-900` (Light) e `text-white` (Dark)
+- **Sottotitoli e Paragrafi base:** `text-gray-600` e `text-gray-700` (Light), `text-gray-400` e `text-gray-300` (Dark)
+- **Errori/Validazione:** `text-red-600` (Light) e `text-red-400` (Dark)
+- **Testi su sfondi accentati (Pulsanti):** `text-white`
+
+### Colori di Stato e Feedback (Banners/Toasts)
+- **Info (Aree informative):**
+  - Container: `bg-blue-50 dark:bg-blue-900/20`
+  - Bordi: `border-blue-200 dark:border-blue-800`
+  - Testo: `text-blue-900 dark:text-blue-100` e `text-blue-800 dark:text-blue-200`
+- **Attenzione / Modifica:**
+  - Container: `bg-yellow-50 dark:bg-yellow-900/20`
+  - Bordi: `border-yellow-200 dark:border-yellow-800`
+  - Testo: `text-yellow-800 dark:text-yellow-200`
+- **Errori (Sezioni):**
+  - Container: `bg-red-50 dark:bg-red-900/20`
+  - Bordi: `border-red-200 dark:border-red-800`
+  - Testo: `text-red-600 dark:text-red-400`
+
+## 3. Tipografia
+
+- Font standard Sans-serif di Tailwind.
+- **Titoli Principali (H1, H2):** `text-xl sm:text-2xl` o `text-3xl`, spesso associati a `font-bold`.
+- **Label dei Form:** `text-sm font-medium` oppure `text-xs font-medium` per etichette secondarie.
+- **Testo di base e bottoni:** `text-sm sm:text-base`. Notevole l'utilizzo sistematico di dimensioni di testo ridotte (`text-sm`) come default, dando un aspetto pulito e da "dashboard".
+
+## 4. Layout e Spaziature (Spacing & Grid)
+
+Il layout generale prevede interfacce a blocco centrale, tipiche delle dashboard/app web responsive.
+- **Container Globale (es. Header):** `max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8`
+- **Card e Moduli principali:** Padded con `p-4 sm:p-6`, angoli molto arrotondati (`rounded-2xl` o `rounded-lg`) e una decisa ombra (`shadow-md` o `shadow-lg`).
+- **Disposizione a Griglia:** Uso massiccio di griglie responsive per i form, in particolare `grid grid-cols-1 sm:grid-cols-3 gap-3`. La disposizione verticale passa a orizzontale a partire dai breakpoint `sm` (640px).
+- **Flexbox Layout:** Utilizzato estensivamente per l'allineamento. Es: `flex justify-between items-center`, `flex items-center space-x-3`, `flex items-center gap-2`.
+
+## 5. Input, Form e Componenti Interattivi
+
+Gli stili degli elementi di form sono altamente standardizzati:
+- Gli **Input / Textarea** presentano questa struttura di classi:
+  `w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white text-sm`
+- Stati di Focus per Input: 
+  `focus:ring-2 focus:ring-indigo-500 focus:border-transparent`
+- Validation Error su Input: 
+  Aggiunta condizionale di bordi rossi: `border-red-500 dark:border-red-500`.
+
+## 6. Pulsanti e Bottoni
+
+I pulsanti sono ben definiti a seconda della loro priorità (Hierarchy):
+- **Bottoni Primari (es. Save/Submit):** 
+  Uso sistematico di gradienti con elevati livelli di transizione e ombra.
+  `bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-semibold py-2.5 px-4 rounded-lg hover:from-indigo-700 hover:to-purple-700 transition-all duration-200 shadow-lg hover:shadow-xl`
+- **Bottoni di Destrutturazione / Pericolo (es. Delete/Logout):**
+  `bg-red-600 hover:bg-red-700 text-white font-semibold flex items-center gap-2 transition-all`
+- **Bottoni Ghost / Secondari / Link (es. + Add Interval):**
+  `text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 font-medium`
+
+## 7. Transizioni ed Animazioni
+
+Utilizzo sottile e coerente del pacchetto di transizioni di Tailwind per offrire feedback interattivo fluido:
+- Transizioni generali su tutti i bottoni interattivi: `transition-all duration-200`
+- Transizioni specifiche su colori o sfondi al passaggio del mouse: `transition-colors`
+- Micro-animazioni come le rotazioni (es. icone accordion): `transform transition-transform rotate-180`
+
+## Riepilogo / Checklist per Replicare
+
+1. **Setup Enviornment:** Installare Tailwind CSS.
+2. **Definire la palette nel config (Opzionale):** Nonostante si usino colori base (indigo, purple, red, yellow, blue, gray), la fedeltà impone di seguire *esattamente* i pesi di Tailwind standard (es. grigi dal `50` al `900`, varianti a trasparenza es. `/20` per le background delle card informative dark).
+3. **Inizializzare Root CSS:** Utilizzare un background base che supporti la dark-mode come blocco di partenza standard.
+4. **Strutturare l'UI in card (rounded-2xl, shadow-lg) all'interno di un canvas vuoto (bg-gray-50).**
+5. **Applica lo stile focus `ring` indigo sui campi inputs.**
+6. **Mantenere lo standard dei gradienti (Indigo -> Purple) per i primary calls to action.**
