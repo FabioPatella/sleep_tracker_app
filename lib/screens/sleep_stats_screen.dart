@@ -19,6 +19,10 @@ class _SleepStatsScreenState extends State<SleepStatsScreen> {
   int _activeTabIndex = 0;
   DateTimeRange? _customDateRange;
 
+  int _chartViewType = 0; // 0 = Timeline, 1 = Weekday Averages, 2 = Keyword Groups
+  List<String> _userKeywords = [];
+  int? _stickyComparisonIndex;
+
   @override
   void initState() {
     super.initState();
@@ -27,8 +31,10 @@ class _SleepStatsScreenState extends State<SleepStatsScreen> {
 
   Future<void> _loadData() async {
     final records = await StorageService.getRecords();
+    final keywords = await StorageService.getKeywords();
     setState(() {
       _allRecords = records;
+      _userKeywords = keywords;
       _isLoading = false;
       _applyFilter();
     });
@@ -101,6 +107,7 @@ class _SleepStatsScreenState extends State<SleepStatsScreen> {
     }
     setState(() {
       _activeTabIndex = index;
+      _stickyComparisonIndex = null; // Reset sticky tooltip on tab change
       _applyFilter();
     });
   }
@@ -142,6 +149,193 @@ class _SleepStatsScreenState extends State<SleepStatsScreen> {
     return record.intervals.isEmpty ? 0 : record.intervals.length - 1;
   }
 
+  double _calculateScore(SleepRecord record) {
+    double totalWeighted = 0;
+    for (var interval in record.intervals) {
+      final startParts = interval.start.split(':');
+      final endParts = interval.end.split(':');
+      
+      int startH = int.parse(startParts[0]);
+      int startM = int.parse(startParts[1]);
+      int endH = int.parse(endParts[0]);
+      int endM = int.parse(endParts[1]);
+
+      double startDecimal = startH + (startM / 60.0);
+      double endDecimal = endH + (endM / 60.0);
+
+      if (endDecimal < startDecimal) {
+        endDecimal += 24.0;
+      }
+      double duration = endDecimal - startDecimal;
+      totalWeighted += (interval.quality * duration);
+    }
+    return totalWeighted / 10.0;
+  }
+
+  void _editKeywords() async {
+    String currentKws = _userKeywords.join(', ');
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        TextEditingController controller = TextEditingController(text: currentKws);
+        return AlertDialog(
+          title: Text('Gestisci Keyword'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Inserisci keyword separate da virgola per analizzare le tue note.', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              SizedBox(height: 16),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: 'es: sport, stress, alcol',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: Text('Annulla')),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, controller.text),
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryIndigo),
+              child: Text('Salva', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        );
+      }
+    );
+
+    if (result != null) {
+      final newKws = result.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+      await StorageService.saveKeywords(newKws);
+      setState(() {
+        _userKeywords = newKws;
+      });
+    }
+  }
+
+  Map<int, List<SleepRecord>> _groupByWeekday() {
+    Map<int, List<SleepRecord>> groups = {1: [], 2: [], 3: [], 4: [], 5: [], 6: [], 7: []};
+    for (var record in _filteredRecords) {
+      try {
+        int weekday = DateTime.parse(record.date).weekday;
+        groups[weekday]!.add(record);
+      } catch (_) {}
+    }
+    return groups;
+  }
+
+  Map<String, List<SleepRecord>> _groupByKeywords() {
+    Map<String, List<SleepRecord>> groups = {'Altro': []};
+    for (var kw in _userKeywords) {
+      groups[kw] = [];
+    }
+
+    for (var record in _filteredRecords) {
+      bool matched = false;
+      String notes = (record.notes ?? '').toLowerCase();
+      for (var kw in _userKeywords) {
+        if (notes.contains(kw.toLowerCase())) {
+          groups[kw]!.add(record);
+          matched = true;
+        }
+      }
+      if (!matched) {
+        groups['Altro']!.add(record);
+      }
+    }
+    return groups;
+  }
+
+  void _showGroupDetails(String groupLabel, List<SleepRecord> records, BuildContext context) {
+    if (records.isEmpty) return;
+
+    double avgHours = records.map((r) => _calculateTotalHours(r)).reduce((a, b) => a + b) / records.length;
+    double avgIntensity = records.map((r) => _calculateAverageIntensity(r)).reduce((a, b) => a + b) / records.length;
+    double avgAwakenings = records.map((r) => _calculateAwakenings(r)).reduce((a, b) => a + b).toDouble() / records.length;
+    double avgScore = records.map((r) => _calculateScore(r)).reduce((a, b) => a + b) / records.length;
+
+    int h = avgHours.floor();
+    int m = ((avgHours - h) * 60).round();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Container(
+          decoration: BoxDecoration(
+            color: Theme.of(context).scaffoldBackgroundColor,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: EdgeInsets.fromLTRB(24, 16, 24, MediaQuery.of(context).padding.bottom + 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.withOpacity(0.3), borderRadius: BorderRadius.circular(2))),
+              ),
+              SizedBox(height: 24),
+              Text('Riepilogo Gruppo', style: Theme.of(context).textTheme.titleLarge, textAlign: TextAlign.center),
+              SizedBox(height: 8),
+              Text(groupLabel, style: TextStyle(color: AppTheme.primaryIndigo, fontWeight: FontWeight.bold, fontSize: 18), textAlign: TextAlign.center),
+              Text('${records.length} notti registrate', style: TextStyle(color: Colors.grey, fontSize: 13), textAlign: TextAlign.center),
+              SizedBox(height: 24),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                   _MiniStat(label: 'Sonno', value: '${h}h ${m}m', icon: Icons.schedule),
+                   _MiniStat(label: 'Qualità', value: '${avgIntensity.toStringAsFixed(1)}/10', icon: Icons.star),
+                   _MiniStat(label: 'Risvegli', value: '${avgAwakenings.toStringAsFixed(1)}', icon: Icons.warning_amber),
+                   _MiniStat(label: 'Score', value: '${avgScore.toStringAsFixed(1)}', icon: Icons.auto_awesome),
+                ],
+              ),
+              SizedBox(height: 24),
+              Text('Dettaglio Giorni', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              SizedBox(height: 8),
+              Container(
+                constraints: BoxConstraints(maxHeight: 250),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: records.length,
+                  itemBuilder: (context, index) {
+                    final rec = records[index];
+                    final dateStr = DateFormat('dd/MM/yy').format(DateTime.parse(rec.date));
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      title: Text(dateStr, style: TextStyle(fontWeight: FontWeight.w500)),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text('Score: ${_calculateScore(rec).toStringAsFixed(1)}', style: TextStyle(color: AppTheme.primaryIndigo, fontWeight: FontWeight.bold)),
+                          Icon(Icons.chevron_right, size: 16, color: Colors.grey),
+                        ],
+                      ),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _showDayDetails(rec, context);
+                      },
+                    );
+                  },
+                ),
+              ),
+              SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryIndigo),
+                child: Text('Chiudi', style: TextStyle(color: Colors.white)),
+              )
+            ],
+          ),
+        );
+      }
+    );
+  }
+
   void _showDayDetails(SleepRecord record, BuildContext context) {
     DateTime dateObj = DateTime.parse(record.date);
     String formattedDate = DateFormat('dd MMMM yyyy').format(dateObj);
@@ -179,11 +373,12 @@ class _SleepStatsScreenState extends State<SleepStatsScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
-                  _MiniStat(label: 'Durata', value: '${h}h ${m}m', icon: Icons.schedule),
-                  _MiniStat(label: 'Qualità', value: '${_calculateAverageIntensity(record).toStringAsFixed(1)}/10', icon: Icons.star),
-                  _MiniStat(label: 'Risvegli', value: '${_calculateAwakenings(record)}', icon: Icons.warning_amber),
-                ],
-              ),
+                   _MiniStat(label: 'Durata', value: '${h}h ${m}m', icon: Icons.schedule),
+                   _MiniStat(label: 'Qualità', value: '${_calculateAverageIntensity(record).toStringAsFixed(1)}/10', icon: Icons.star),
+                   _MiniStat(label: 'Risvegli', value: '${_calculateAwakenings(record)}', icon: Icons.warning_amber),
+                   _MiniStat(label: 'Score', value: '${_calculateScore(record).toStringAsFixed(1)}', icon: Icons.auto_awesome),
+                 ],
+               ),
               SizedBox(height: 24),
               if (record.notes != null && record.notes!.isNotEmpty) ...[
                 Text('Note', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
@@ -261,6 +456,8 @@ class _SleepStatsScreenState extends State<SleepStatsScreen> {
                       scaleEnabled: true,
                       minScale: 1.0,
                       maxScale: 10.0,
+                      // Avvolgiamo il grafico in un GestureDetector per assicurarci che riceva i tap
+                      // anche dentro InteractiveViewer
                       child: Center(
                         child: AspectRatio(
                           aspectRatio: 1.2,
@@ -295,22 +492,31 @@ class _SleepStatsScreenState extends State<SleepStatsScreen> {
     double globalAvgSleep = 0;
     double globalAvgIntensity = 0;
     double globalAvgAwakenings = 0;
+    double globalAvgScore = 0;
 
     if (_filteredRecords.isNotEmpty) {
       for (var r in _filteredRecords) {
         globalAvgSleep += _calculateTotalHours(r);
         globalAvgIntensity += _calculateAverageIntensity(r);
         globalAvgAwakenings += _calculateAwakenings(r);
+        globalAvgScore += _calculateScore(r);
       }
       globalAvgSleep /= _filteredRecords.length;
       globalAvgIntensity /= _filteredRecords.length;
       globalAvgAwakenings /= _filteredRecords.length;
+      globalAvgScore /= _filteredRecords.length;
     }
 
     return Scaffold(
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: EdgeInsets.all(16.0),
+        child: GestureDetector(
+          onTap: () {
+            // Chiudi il tooltip quando clicco fuori dal grafico
+            if (_stickyComparisonIndex != null) setState(() => _stickyComparisonIndex = null);
+          },
+          behavior: HitTestBehavior.opaque,
+          child: SingleChildScrollView(
+            padding: EdgeInsets.all(16.0),
           child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -333,7 +539,63 @@ class _SleepStatsScreenState extends State<SleepStatsScreen> {
             ),
             SizedBox(height: 24),
             
-            // Average Cards
+            // Chart View Type Dropdown (EMPHASIZED)
+            if (_filteredRecords.length > 7 || _activeTabIndex > 0) ...[
+              SizedBox(height: 12),
+              Row(
+                children: [
+                   Expanded(
+                    child: Container(
+                      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primaryIndigo.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: AppTheme.primaryIndigo.withOpacity(0.2)),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<int>(
+                          value: _chartViewType,
+                          isExpanded: true,
+                          icon: Icon(Icons.analytics_outlined, color: AppTheme.primaryIndigo),
+                          style: TextStyle(color: AppTheme.primaryIndigo, fontWeight: FontWeight.bold, fontSize: 16),
+                          items: [
+                            DropdownMenuItem(value: 0, child: Text('Vista: Cronologica')),
+                            DropdownMenuItem(value: 1, child: Text('Vista: Medie Settimanali')),
+                            DropdownMenuItem(value: 2, child: Text('Vista: Analisi Keyword')),
+                          ],
+                          onChanged: (v) {
+                             setState(() {
+                               _chartViewType = v ?? 0;
+                               _stickyComparisonIndex = null; // Reset sticky tooltip on view change
+                             });
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (_chartViewType == 2) ...[
+                    SizedBox(width: 8),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.amber.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: IconButton(
+                        icon: Icon(Icons.auto_fix_high_rounded, color: Colors.amber[800]),
+                        onPressed: _editKeywords,
+                        tooltip: 'Gestisci Keyword',
+                      ),
+                    ),
+                  ]
+                ],
+              ),
+            ],
+            
+            SizedBox(height: 24),
+            
+            // Removed 'Andamento' text to reduce redundancy
+
+            // Average Cards (MOVED DOWN)
             Row(
               children: [
                 Expanded(
@@ -362,23 +624,22 @@ class _SleepStatsScreenState extends State<SleepStatsScreen> {
                     color: Colors.blue, // Linea Blu
                   ),
                 ),
+                SizedBox(width: 8),
+                Expanded(
+                  child: _StatCard(
+                    title: 'Score',
+                    value: globalAvgScore.toStringAsFixed(1),
+                    icon: Icons.auto_awesome,
+                    color: Colors.deepPurple, // Linea Viola
+                  ),
+                ),
               ],
-            ),
-            
-            SizedBox(height: 32),
-            
-            // Chart Overview
-            Text(
-              _activeTabIndex == 0 ? 'Andamento Settimanale' :
-              _activeTabIndex == 1 ? 'Andamento Mensile' :
-              _activeTabIndex == 2 ? 'Andamento Trimestrale' : 'Andamento Personalizzato',
-              style: theme.textTheme.titleLarge,
             ),
             SizedBox(height: 16),
             GestureDetector(
               onTap: () => _showFullscreenChart(context),
               child: Card(
-                clipBehavior: Clip.hardEdge,
+                clipBehavior: Clip.none,
                 child: Padding(
                   padding: EdgeInsets.only(top: 32, bottom: 16, left: 16, right: 32),
                   child: AspectRatio(
@@ -406,10 +667,11 @@ class _SleepStatsScreenState extends State<SleepStatsScreen> {
               int h = hours.floor();
               int m = ((hours - h) * 60).round();
               
-              return _RecentDayCard(
+               return _RecentDayCard(
                 date: formattedDate,
                 duration: '${h}h ${m}m',
                 quality: '${_calculateAverageIntensity(record).toStringAsFixed(1)}/10',
+                score: _calculateScore(record).toStringAsFixed(1),
                 awakenings: _calculateAwakenings(record),
                 record: record,
               );
@@ -417,7 +679,8 @@ class _SleepStatsScreenState extends State<SleepStatsScreen> {
           ],
         ),
       ),
-    ));
+    ),
+  ));
   }
 
   Widget _buildChart({bool isFull = false}) {
@@ -425,18 +688,23 @@ class _SleepStatsScreenState extends State<SleepStatsScreen> {
       return Center(child: Text('Nessun dato per il grafico', style: TextStyle(color: Colors.grey)));
     }
 
+    if (_chartViewType == 1) return _buildWeekdayAveragesChart(isFull: isFull);
+    if (_chartViewType == 2) return _buildKeywordAveragesChart(isFull: isFull);
+
     // Per il grafico prendiamo i record filtrati e li rovesciamo in ordine cronologico (dal più vecchio al più nuovo)
     List<SleepRecord> chartRecords = _filteredRecords.toList().reversed.toList();
     
     List<FlSpot> sleepSpots = [];
     List<FlSpot> intensitySpots = [];
     List<FlSpot> awakeningSpots = [];
+    List<FlSpot> scoreSpots = [];
 
     for (int i = 0; i < chartRecords.length; i++) {
       double x = (i + 1).toDouble();
       sleepSpots.add(FlSpot(x, _calculateTotalHours(chartRecords[i])));
       intensitySpots.add(FlSpot(x, _calculateAverageIntensity(chartRecords[i])));
       awakeningSpots.add(FlSpot(x, _calculateAwakenings(chartRecords[i]).toDouble()));
+      scoreSpots.add(FlSpot(x, _calculateScore(chartRecords[i])));
     }
 
     return LineChart(
@@ -451,19 +719,7 @@ class _SleepStatsScreenState extends State<SleepStatsScreen> {
             }
           },
           touchTooltipData: LineTouchTooltipData(
-             getTooltipItems: (touchedSpots) {
-                return touchedSpots.map((spot) {
-                   String label = '';
-                   if (spot.barIndex == 0) label = 'Sonno: ';
-                   if (spot.barIndex == 1) label = 'Qualità: ';
-                   if (spot.barIndex == 2) label = 'Risvegli: ';
-                   
-                   return LineTooltipItem(
-                     '$label${spot.y.toStringAsFixed(1)}${spot.barIndex == 0 ? 'h' : ''}',
-                     const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                   );
-                }).toList();
-             },
+            getTooltipItems: (touchedSpots) => [],
           ),
         ),
         gridData: FlGridData(
@@ -517,6 +773,7 @@ class _SleepStatsScreenState extends State<SleepStatsScreen> {
               interval: 2,
               reservedSize: 28,
               getTitlesWidget: (value, meta) {
+                if (value > 11) return const SizedBox();
                 return Text(value.toInt().toString(), style: TextStyle(fontSize: 10, color: Colors.grey));
               },
             ),
@@ -526,7 +783,8 @@ class _SleepStatsScreenState extends State<SleepStatsScreen> {
         minX: 1,
         maxX: chartRecords.length.toDouble() > 1 ? chartRecords.length.toDouble() : 2,
         minY: 0,
-        maxY: 12,
+        maxY: 11.5,
+        clipData: FlClipData.none(),
         lineBarsData: [
           // Hours Slept (Green Line)
           LineChartBarData(
@@ -557,7 +815,176 @@ class _SleepStatsScreenState extends State<SleepStatsScreen> {
             isStrokeCapRound: true,
             dotData: FlDotData(show: true, getDotPainter: (spot, percent, barData, index) => FlDotCirclePainter(radius: 3, color: Colors.blue, strokeWidth: 1, strokeColor: Colors.white)),
           ),
+          // Score (Purple Line)
+          LineChartBarData(
+            spots: scoreSpots.isEmpty ? [FlSpot(1,0)] : scoreSpots,
+            isCurved: true,
+            color: Colors.deepPurple,
+            barWidth: 3,
+            isStrokeCapRound: true,
+            dotData: FlDotData(show: true, getDotPainter: (spot, percent, barData, index) => FlDotCirclePainter(radius: 4, color: Colors.deepPurple, strokeWidth: 1, strokeColor: Colors.white)),
+            belowBarData: BarAreaData(show: false),
+          ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildWeekdayAveragesChart({bool isFull = false}) {
+    final groups = _groupByWeekday();
+    List<FlSpot> sleepSpots = [];
+    List<FlSpot> intensitySpots = [];
+    List<FlSpot> awakeningSpots = [];
+    List<FlSpot> scoreSpots = [];
+
+    const weekdaysLabels = ['LUN', 'MAR', 'MER', 'GIO', 'VEN', 'SAB', 'DOM'];
+    List<List<SleepRecord>> groupRecords = [];
+
+    for (int i = 1; i <= 7; i++) {
+        final dayRecords = groups[i]!;
+        groupRecords.add(dayRecords);
+        if (dayRecords.isEmpty) continue;
+
+        double avgSleep = dayRecords.map((r) => _calculateTotalHours(r)).reduce((a, b) => a + b) / dayRecords.length;
+        double avgIntensity = dayRecords.map((r) => _calculateAverageIntensity(r)).reduce((a, b) => a + b) / dayRecords.length;
+        double avgAwakenings = dayRecords.map((r) => _calculateAwakenings(r)).reduce((a, b) => a + b).toDouble() / dayRecords.length;
+        double avgScore = dayRecords.map((r) => _calculateScore(r)).reduce((a, b) => a + b) / dayRecords.length;
+
+        double x = i.toDouble();
+        sleepSpots.add(FlSpot(x, avgSleep));
+        intensitySpots.add(FlSpot(x, avgIntensity));
+        awakeningSpots.add(FlSpot(x, avgAwakenings));
+        scoreSpots.add(FlSpot(x, avgScore));
+    }
+
+    return _renderComparisonChart(
+      sleepSpots, intensitySpots, awakeningSpots, scoreSpots,
+      (x) => weekdaysLabels[x.toInt() - 1],
+      7,
+      groupRecords
+    );
+  }
+
+  Widget _buildKeywordAveragesChart({bool isFull = false}) {
+    if (_userKeywords.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text('Nessuna keyword impostata', style: TextStyle(color: Colors.grey)),
+            TextButton(onPressed: _editKeywords, child: Text('Aggiungi Keyword'))
+          ],
+        ),
+      );
+    }
+
+    final groups = _groupByKeywords();
+    List<FlSpot> sleepSpots = [];
+    List<FlSpot> intensitySpots = [];
+    List<FlSpot> awakeningSpots = [];
+    List<FlSpot> scoreSpots = [];
+
+    List<String> labels = groups.keys.toList();
+    List<List<SleepRecord>> groupRecords = [];
+
+    for (int i = 0; i < labels.length; i++) {
+        final catRecords = groups[labels[i]]!;
+        groupRecords.add(catRecords);
+        if (catRecords.isEmpty) continue;
+
+        double avgSleep = catRecords.map((r) => _calculateTotalHours(r)).reduce((a, b) => a + b) / catRecords.length;
+        double avgIntensity = catRecords.map((r) => _calculateAverageIntensity(r)).reduce((a, b) => a + b) / catRecords.length;
+        double avgAwakenings = catRecords.map((r) => _calculateAwakenings(r)).reduce((a, b) => a + b).toDouble() / catRecords.length;
+        double avgScore = catRecords.map((r) => _calculateScore(r)).reduce((a, b) => a + b) / catRecords.length;
+
+        double x = (i + 1).toDouble();
+        sleepSpots.add(FlSpot(x, avgSleep));
+        intensitySpots.add(FlSpot(x, avgIntensity));
+        awakeningSpots.add(FlSpot(x, avgAwakenings));
+        scoreSpots.add(FlSpot(x, avgScore));
+    }
+
+    return _renderComparisonChart(
+      sleepSpots, intensitySpots, awakeningSpots, scoreSpots,
+      (x) => labels[x.toInt() - 1],
+      labels.length.toDouble(),
+      groupRecords
+    );
+  }
+
+  Widget _renderComparisonChart(
+    List<FlSpot> sleep, List<FlSpot> intensity, List<FlSpot> awakenings, List<FlSpot> score,
+    String Function(double) getLabel,
+    double maxXVal,
+    List<List<SleepRecord>> groupRecords
+  ) {
+     final barSleep = LineChartBarData(spots: sleep, isCurved: false, color: Colors.green, barWidth: 3, dotData: FlDotData(show: true));
+     final barIntensity = LineChartBarData(spots: intensity, isCurved: false, color: Colors.orange, barWidth: 2, dotData: FlDotData(show: true), dashArray: [5, 5]);
+     final barAwakenings = LineChartBarData(spots: awakenings, isCurved: false, color: Colors.blue, barWidth: 2, dotData: FlDotData(show: true));
+     final barScore = LineChartBarData(spots: score, isCurved: false, color: Colors.deepPurple, barWidth: 3, dotData: FlDotData(show: true));
+
+     return LineChart(
+      LineChartData(
+        showingTooltipIndicators: [], 
+        lineTouchData: LineTouchData(
+          handleBuiltInTouches: false,
+          touchCallback: (FlTouchEvent event, LineTouchResponse? touchResponse) {
+             if (event is FlTapUpEvent) {
+               if (touchResponse != null && touchResponse.lineBarSpots != null && touchResponse.lineBarSpots!.isNotEmpty) {
+                 final clickedX = touchResponse.lineBarSpots!.first.x.toInt();
+                 setState(() {
+                   if (_stickyComparisonIndex == clickedX) {
+                     _stickyComparisonIndex = null;
+                   } else {
+                     _stickyComparisonIndex = clickedX;
+                     // Mostra dettagli gruppo
+                     _showGroupDetails(getLabel(clickedX.toDouble()), groupRecords[clickedX - 1], context);
+                   }
+                 });
+               } else {
+                 setState(() => _stickyComparisonIndex = null);
+               }
+             }
+          },
+          touchTooltipData: LineTouchTooltipData(
+            getTooltipItems: (touchedSpots) => [],
+          ),
+        ),
+        gridData: FlGridData(show: true, drawVerticalLine: true, horizontalInterval: 2),
+        titlesData: FlTitlesData(
+          rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          bottomTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              reservedSize: 30,
+              interval: 1,
+              getTitlesWidget: (value, meta) {
+                try {
+                  return SideTitleWidget(axisSide: meta.axisSide, child: Text(getLabel(value), style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.grey)));
+                } catch (_) { return SizedBox(); }
+              },
+            ),
+          ),
+          leftTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              interval: 2,
+              reservedSize: 28,
+              getTitlesWidget: (value, meta) {
+                if (value > 11) return const SizedBox();
+                return Text(value.toInt().toString(), style: TextStyle(fontSize: 10, color: Colors.grey));
+              },
+            ),
+          ),
+        ),
+        borderData: FlBorderData(show: false),
+        minX: 1,
+        maxX: maxXVal,
+        minY: 0,
+        maxY: 11.5,
+        clipData: FlClipData.none(),
+        lineBarsData: [barSleep, barIntensity, barAwakenings, barScore],
       ),
     );
   }
@@ -595,6 +1022,7 @@ class _RecentDayCard extends StatelessWidget {
   final String date;
   final String duration;
   final String quality;
+  final String score;
   final int awakenings;
   final SleepRecord record;
 
@@ -602,6 +1030,7 @@ class _RecentDayCard extends StatelessWidget {
     required this.date, 
     required this.duration, 
     required this.quality, 
+    required this.score,
     required this.awakenings,
     required this.record,
   });
@@ -622,14 +1051,22 @@ class _RecentDayCard extends StatelessWidget {
           child: Icon(Icons.nightlight_round, color: AppTheme.primaryIndigo),
         ),
         title: Text(date, style: TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: Text('Durata: $duration • Risvegli: $awakenings', style: theme.textTheme.bodyMedium),
-        trailing: Container(
-          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: Colors.orange.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Text(quality, style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
+        subtitle: Text('Durata: $duration • Score: $score', style: theme.textTheme.bodyMedium),
+        trailing: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Container(
+              padding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(quality, style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 12)),
+            ),
+            SizedBox(height: 4),
+            Text('Risvegli: $awakenings', style: TextStyle(fontSize: 10, color: Colors.grey)),
+          ],
         ),
         onTap: () {
           // Usa il widget stateful per accedere al metodo _showDayDetails volendo, ma lo passiamo tramite un callback?
